@@ -15,4 +15,4 @@ install:
 
 clean: 
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) clean
-	$(MAKE) -C ../legacy-vme64x-core/drv/driver clean
+	$(MAKE) -C ../legacy-vme64x-core/drv/vmebridge/driver clean -f Makefile.gsi

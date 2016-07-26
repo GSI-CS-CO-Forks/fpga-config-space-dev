@@ -40,8 +40,8 @@ ccflags-y += -I$(M)/../pcie-wb
 
 # If using out-of-kernel VME, declare dependency
 ifeq ($(VME_SOURCE),external)
-ccflags-y += -I$(M)/../legacy-vme64x-core/drv/driver
-obj-m += ../legacy-vme64x-core/drv/driver/
+ccflags-y += -I$(M)/../legacy-vme64x-core/drv/vmebridge/driver
+obj-m += ../legacy-vme64x-core/drv/vmebridge/driver/
 endif
 
 # The actual driver!
