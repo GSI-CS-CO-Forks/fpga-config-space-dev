@@ -28,6 +28,11 @@
 #endif
 
 static unsigned int debug = 0;
+static unsigned int debug_irqhandler = 1;
+static unsigned int irq_counter = 0;
+
+static unsigned int msien = 1; // module parameter, enable MSI by default
+
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,28)
 
@@ -196,6 +201,9 @@ static wb_data_t wb_read_cfg(struct wishbone *wb, wb_addr_t addr)
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
+
+	if (unlikely(debug)) 
+	printk(KERN_ALERT PMC_WB ": wb_read_cfg : addr (0x%x) control (0x%x)\n", addr, control);
 	
 	switch (addr) {
 	case 0:  out = ioread32(control + ERROR_FLAG_HIGH);   break;
@@ -226,6 +234,7 @@ static int wb_request(struct wishbone *wb, struct wishbone_request *req)
 	req->mask  = ctl & 0xf;
 	req->write = (ctl & 0x40000000) != 0;
 	
+	if (unlikely(debug)) printk(KERN_ALERT "request %x\n", ctl);
 	out = (ctl & 0x80000000) != 0;
 	
 	if (out) iowrite32(1, control + MASTER_CTL_HIGH); /* dequeue operation */
@@ -242,6 +251,8 @@ static void wb_reply(struct wishbone *wb, int err, wb_data_t data)
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
+	
+	if (unlikely(debug)) printk(KERN_ALERT "pushing reply\n");
 	
 	iowrite32(data, control + MASTER_DAT_LOW);
 	iowrite32(err+2, control + MASTER_CTL_HIGH);
@@ -312,8 +323,28 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * register char dev
 	 */
 	u8 revision;
+        u16 vendor_id;
+        u16 device_id;
 	struct pcie_wb_dev *dev;
 	unsigned char* control;
+        int bar0; // wb/eb configuration space
+        int bar1; // wishbone address space
+
+        unsigned char* wb_conf;
+        uint32_t wb_cfg_data;
+
+        // check which device is being installed: PMC or PCIe
+	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
+	if (device_id == PMC_WB_DEVICE_ID) {
+	    printk(KERN_ALERT PCIE_WB ": Installing PMC Device : ID %x:\n", device_id);
+            bar0 = 1;
+            bar1 = 2;
+	}else{
+            printk(KERN_ALERT PCIE_WB ": Installing PCIe Device : ID %x:\n", device_id);
+            bar0 = 0;
+            bar1 = 1;
+        }
+
 
 	pci_read_config_byte(pdev, PCI_REVISION_ID, &revision);
 	if (revision != 0x01) {
@@ -344,8 +375,8 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	dev->shift = 0;
 	pci_set_drvdata(pdev, dev);
 	
-	if (setup_bar(pdev, &dev->pci_res[0], 0) < 0) goto fail_free;
-	if (setup_bar(pdev, &dev->pci_res[1], 1) < 0) goto fail_bar0;
+	if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
+	if (setup_bar(pdev, &dev->pci_res[1], bar1) < 0) goto fail_bar0;
 	
 	/* Initialize device registers */
 	control = dev->pci_res[0].addr;
@@ -424,6 +455,7 @@ static void remove(struct pci_dev *pdev)
 
 static struct pci_device_id ids[] = {
 	{ PCI_DEVICE(PCIE_WB_VENDOR_ID, PCIE_WB_DEVICE_ID), },
+        { PCI_DEVICE(PCIE_WB_VENDOR_ID, PMC_WB_DEVICE_ID ), },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, ids);

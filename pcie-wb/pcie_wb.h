@@ -8,6 +8,8 @@
 
 #define PCIE_WB_VENDOR_ID	0x10dc
 #define	PCIE_WB_DEVICE_ID	0x019a
+#define	PMC_WB_DEVICE_ID	0xc570
+
 
 #define CONTROL_REGISTER_HIGH	0
 #define CONTROL_REGISTER_LOW	4
@@ -27,6 +29,18 @@
 
 #define WINDOW_HIGH	0xFFFF0000UL
 #define WINDOW_LOW	0x0000FFFCUL
+
+/* PCI core control and status registers in BAR0 */
+
+#define PCI_STATUS_REG      0x04
+#define PCI_CONF_IRQ        0x3C
+
+#define WB_CONF_IRQ_STATUS_MASK 0x00000001
+
+#define WB_CONF_INT_ACK_REG 0x1E8 /* PCI core WB interrupt Acknowledge register */    
+#define WB_CONF_ICR_REG     0x1EC /* PCI core WB interrupt Control register */    
+#define WB_CONF_ISR_REG     0x1F0 /* PCI core WB interrupt Status  register */
+
 
 /* One per BAR */
 struct pcie_wb_resource {
