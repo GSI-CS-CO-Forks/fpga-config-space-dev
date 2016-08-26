@@ -307,19 +307,19 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 
 	    if (unlikely(debug_irqhandler)){ // debug print
 
-	        printk(KERN_ALERT PMC_WB ": irq_handler : parameters irq: 0x%x, dev_id: 0x%x\n", irq, dev_id);
+	        printk(KERN_ALERT PCIE_WB ": irq_handler : parameters irq: 0x%x, dev_id: 0x%x\n", irq, dev_id);
 
 	        wb_cfg_data = ioread32(wb_conf + PCI_CONF_IRQ);
-	            printk(KERN_ALERT PMC_WB ": irq_handler : PCI_CONF_IRQ 0x%x\n", wb_cfg_data);
+	            printk(KERN_ALERT PCIE_WB ": irq_handler : PCI_CONF_IRQ 0x%x\n", wb_cfg_data);
 
 	        wb_cfg_data = ioread32(wb_conf + WB_CONF_INT_ACK_REG);
-	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_INT_ACK_REG 0x%x\n", wb_cfg_data);
+	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_INT_ACK_REG 0x%x\n", wb_cfg_data);
 
 	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ICR_REG);
-	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_ICR_REG 0x%x\n", wb_cfg_data);
+	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_ICR_REG 0x%x\n", wb_cfg_data);
 
 	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
-	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_ISR_REG 0x%x\n", wb_cfg_data);
+	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_ISR_REG 0x%x\n", wb_cfg_data);
 	    }
 	}
 	
