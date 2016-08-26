@@ -7,8 +7,8 @@
 #define PCIE_WB_VERSION	"0.1"
 
 #define PCIE_WB_VENDOR_ID	0x10dc
-#define	PCIE_WB_DEVICE_ID	0x019a
-#define	PMC_WB_DEVICE_ID	0xc570
+#define	PCIE_WB_DEVICE_ID	0x019a  // PCIe FTRNs (PEXARIA, EXPLODER, AMC)
+#define	PMC_WB_DEVICE_ID	0xc570  // PMC  FTRN
 
 
 #define CONTROL_REGISTER_HIGH	0
@@ -53,8 +53,9 @@ struct pcie_wb_resource {
 /* One per physical card */
 struct pcie_wb_dev {
 	struct pci_dev* pci_dev;
-	struct pcie_wb_resource pci_res[2];
+	struct pcie_wb_resource pci_res[3];
 	int    msi;
+    int    bus_type_pci;
 	
 	struct wishbone wb;
 	unsigned int window_offset;

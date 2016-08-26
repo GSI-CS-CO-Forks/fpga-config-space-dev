@@ -30,6 +30,7 @@
 static unsigned int debug = 0;
 static unsigned int debug_irqhandler = 1;
 static unsigned int irq_counter = 0;
+static unsigned int irq_counter_pmc = 0;
 
 static unsigned int msien = 1; // module parameter, enable MSI by default
 
@@ -203,7 +204,7 @@ static wb_data_t wb_read_cfg(struct wishbone *wb, wb_addr_t addr)
 	control = dev->pci_res[0].addr;
 
 	if (unlikely(debug)) 
-	printk(KERN_ALERT PMC_WB ": wb_read_cfg : addr (0x%x) control (0x%x)\n", addr, control);
+	printk(KERN_ALERT PCIE_WB ": wb_read_cfg : addr (0x%x) control (0x%x)\n", addr, control);
 	
 	switch (addr) {
 	case 0:  out = ioread32(control + ERROR_FLAG_HIGH);   break;
@@ -271,9 +272,58 @@ static const struct wishbone_operations wb_ops = {
 
 static irqreturn_t irq_handler(int irq, void *dev_id)
 {
-	struct pcie_wb_dev *dev = dev_id;
+    struct pcie_wb_dev *dev = dev_id;
+
+    unsigned char* wb_conf;
+    uint32_t wb_cfg_data;
+
+    // if card is PMC with IntX interrupts, 
+    // it is likely that irq line is shared
+    if ((dev->bus_type_pci) && !(dev->msi)){
+
+	    // check that pmc card has requested IRQ
+	    // if it has not then exit
+	    wb_conf = dev->pci_res[2].addr;
+
+	    if (unlikely(debug_irqhandler)){
+	        irq_counter++; 
+	        printk(KERN_ALERT ":irq handler: checking IRQ status : irq count: %d : %d\n", irq_counter_pmc, irq_counter);
+	    }
+
+	    wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
+        if (unlikely(debug_irqhandler)){
+	        printk(KERN_ALERT ":irq handler: WB_CONF_ISR_REG : 0x%x\n", wb_cfg_data);
+	    }
+
+	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
+	        printk(KERN_ALERT ":irq handler: not PMC interrupt");
+	        return IRQ_NONE;
+	    }
+
+	    if (unlikely(debug_irqhandler)){
+	        irq_counter_pmc++;	 
+	        printk(KERN_ALERT ":irq handler: IRQ executed : irq count: %d\n", irq_counter_pmc);
+	    }
+
+	    if (unlikely(debug_irqhandler)){ // debug print
+
+	        printk(KERN_ALERT PMC_WB ": irq_handler : parameters irq: 0x%x, dev_id: 0x%x\n", irq, dev_id);
+
+	        wb_cfg_data = ioread32(wb_conf + PCI_CONF_IRQ);
+	            printk(KERN_ALERT PMC_WB ": irq_handler : PCI_CONF_IRQ 0x%x\n", wb_cfg_data);
+
+	        wb_cfg_data = ioread32(wb_conf + WB_CONF_INT_ACK_REG);
+	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_INT_ACK_REG 0x%x\n", wb_cfg_data);
+
+	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ICR_REG);
+	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_ICR_REG 0x%x\n", wb_cfg_data);
+
+	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
+	            printk(KERN_ALERT PMC_WB ": irq_handler : WB_CONF_ISR_REG 0x%x\n", wb_cfg_data);
+	    }
+	}
 	
-	pcie_int_enable(dev, 0);
+	pcie_int_enable(dev, 0);/* disable IRQ on Etherbone layer - Etherbone */
 	wishbone_slave_ready(&dev->wb);
 	
 	return IRQ_HANDLED;
@@ -323,27 +373,15 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * register char dev
 	 */
 	u8 revision;
-        u16 vendor_id;
-        u16 device_id;
+    u16 vendor_id;
+    u16 device_id;
 	struct pcie_wb_dev *dev;
 	unsigned char* control;
-        int bar0; // wb/eb configuration space
-        int bar1; // wishbone address space
+    int bar0; // wb/eb configuration space
+    int bar1; // wishbone address space
 
-        unsigned char* wb_conf;
-        uint32_t wb_cfg_data;
-
-        // check which device is being installed: PMC or PCIe
-	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
-	if (device_id == PMC_WB_DEVICE_ID) {
-	    printk(KERN_ALERT PCIE_WB ": Installing PMC Device : ID %x:\n", device_id);
-            bar0 = 1;
-            bar1 = 2;
-	}else{
-            printk(KERN_ALERT PCIE_WB ": Installing PCIe Device : ID %x:\n", device_id);
-            bar0 = 0;
-            bar1 = 1;
-        }
+    unsigned char* wb_conf;
+    uint32_t wb_cfg_data;
 
 
 	pci_read_config_byte(pdev, PCI_REVISION_ID, &revision);
@@ -373,10 +411,32 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	dev->low_addr = 0;
 	dev->width = 4;
 	dev->shift = 0;
+
 	pci_set_drvdata(pdev, dev);
+
+    // check which device is being installed: PMC or PCIe and 
+    // setup bars accordingly
+	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
+	if (device_id == PMC_WB_DEVICE_ID) {
+	    printk(KERN_ALERT PCIE_WB ": Installing PMC Device : ID %x:\n", device_id);
+            bar0 = 1;
+            bar1 = 2;
+            dev->bus_type_pci = 1;
+	}else{
+            printk(KERN_ALERT PCIE_WB ": Installing PCIe Device : ID %x:\n", device_id);
+            bar0 = 0;
+            bar1 = 1;
+            dev->bus_type_pci = 0;
+    }
+
 	
 	if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
 	if (setup_bar(pdev, &dev->pci_res[1], bar1) < 0) goto fail_bar0;
+    if (device_id == PMC_WB_DEVICE_ID) {
+        // PMC - BAR0 is PCI WB bridge configuration space
+        if (setup_bar(pdev, &dev->pci_res[2], 0) < 0) goto fail_bar1;
+    }
+    
 	
 	/* Initialize device registers */
 	control = dev->pci_res[0].addr;
@@ -421,7 +481,7 @@ fail_msi:
 	}
 /*fail_master:*/
 	pci_clear_master(pdev);
-/*fail_bar1:*/
+fail_bar1:
 	destroy_bar(&dev->pci_res[1]);
 fail_bar0:
 	destroy_bar(&dev->pci_res[0]);
