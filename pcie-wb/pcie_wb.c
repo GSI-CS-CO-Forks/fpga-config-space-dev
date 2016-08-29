@@ -508,7 +508,10 @@ static void remove(struct pci_dev *pdev)
 		pci_disable_msi(pdev);
 	}
 	pci_clear_master(pdev);
-	destroy_bar(&dev->pci_res[1]);
+	if(dev->bus_type_pci){
+          destroy_bar(&dev->pci_res[2]);
+        }
+        destroy_bar(&dev->pci_res[1]);
 	destroy_bar(&dev->pci_res[0]);
 	kfree(dev);
 	pci_disable_device(pdev);
