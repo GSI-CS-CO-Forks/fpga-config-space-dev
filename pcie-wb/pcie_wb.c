@@ -282,24 +282,24 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	    // if it has not then exit
 	    wb_conf = dev->pci_res[2].addr;
 
-/*
+
 	    if (unlikely(debug_irqhandler)){
 	        irq_counter++; 
 	        printk(KERN_ALERT ":irq handler: checking IRQ status : irq count: %d : %d\n", irq_counter_pmc, irq_counter);
 	    }
-*/
+
 	    wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
-/*
+
         if (unlikely(debug_irqhandler)){
 	        printk(KERN_ALERT ":irq handler: WB_CONF_ISR_REG : 0x%x\n", wb_cfg_data);
 	    }
-*/
+
 	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
-//	        printk(KERN_ALERT ":irq handler: not PMC interrupt");
+	        printk(KERN_ALERT ":irq handler: not PMC interrupt");
 	        return IRQ_NONE;
 	    }
 
-/*
+
 	    if (unlikely(debug_irqhandler)){
 	        irq_counter_pmc++;	 
 	        printk(KERN_ALERT ":irq handler: IRQ executed : irq count: %d\n", irq_counter_pmc);
@@ -321,7 +321,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
 	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_ISR_REG 0x%x\n", wb_cfg_data);
 	    }
-*/
+
 	}
 	
 	pcie_int_enable(dev, 0);/* disable IRQ on Etherbone layer - Etherbone */
