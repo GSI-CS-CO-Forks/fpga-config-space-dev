@@ -430,11 +430,11 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
     //	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
     //	if (device_id == PMC_WB_DEVICE_ID) {
 	if (pdev->device == PMC_WB_DEVICE_ID) {
-	    printk(KERN_ALERT PCIE_WB ": Installing PMC Device : ID %x:\n", pdev->device);
+	    printk(KERN_INFO PCIE_WB ": Installing PMC Device : ID %x:\n", pdev->device);
             bar0 = 1;
             bar1 = 2;
 	}else{
-            printk(KERN_ALERT PCIE_WB ": Installing PCIe Device : ID %x:\n", pdev->device);
+            printk(KERN_INFO PCIE_WB ": Installing PCIe Device : ID %x:\n", pdev->device);
             bar0 = 0;
             bar1 = 1;
         }
@@ -442,6 +442,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	
 	if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
 	if (setup_bar(pdev, &dev->pci_res[1], bar1) < 0) goto fail_bar0;
+
     if (pdev->device == PMC_WB_DEVICE_ID) {
         // PMC - BAR0 is PCI WB bridge configuration space
         if (setup_bar(pdev, &dev->pci_res[2], 0) < 0) goto fail_bar1;
@@ -466,16 +467,25 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
                 pci_clear_master(pdev); 
 	    }  
 	
-	    //if (dev->msi) {
+	    if (dev->msi) {
 		/* disable legacy interrupts when using MSI */
-		pci_intx(pdev, 0);
-	    //}
-	}else{
 
-        //if(!dev->msi) {
+                printk(KERN_INFO PCIE_WB ": Enbled MSI disabling INTx irqs for Device : ID %x:\n", pdev->device);
+		pci_intx(pdev, 0);
+	    }
+	}
+
+
+        if((pdev->pcie_cap && !dev->msi){
+            pci_intx(pdev, 1); // enable legacy INTx interrupts
+            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for Device : ID %x:\n", pdev->device);
+        }
+
+        if(pdev->device = PMC_WB_DEVICE_ID && intx)){
             pci_intx(pdev, 1); // enable INTx interrupts
 	    wb_conf = dev->pci_res[2].addr;
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); // enable PCI bridge wishbone interrupts
+            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for Device : ID %x:\n", pdev->device);
         }
 
 	if (wishbone_register(&dev->wb) < 0) {
