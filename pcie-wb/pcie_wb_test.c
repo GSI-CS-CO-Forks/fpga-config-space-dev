@@ -32,7 +32,7 @@ static unsigned int debug_irqhandler = 1;
 static unsigned int irq_counter = 0;
 static unsigned int irq_counter_pmc = 0;
 
-static unsigned int intx = 1; // module parameter, force INTx interrupt for PCI/PMC card
+static unsigned int intx = 0; // module parameter, force INTx interrupt for PCI/PMC card
 
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,28)
@@ -461,20 +461,26 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	    if (pci_enable_msi(pdev) != 0) {
 		/* resort to legacy interrupts */
 		printk(KERN_ALERT PCIE_WB ": could not enable MSI interrupting (using legacy)\n");
-		dev->msi = 0;
+	 	dev->msi = 0;
+                pci_clear_master(pdev); 
 	    }  
 	
-	    if (dev->msi) {
+	    //if (dev->msi) {
 		/* disable legacy interrupts when using MSI */
 		pci_intx(pdev, 0); 
-	    }
-	}
+	    //}
+	}else{
+
+        //if(!dev->msi) {
+            pci_intx(pdev, 1); // enable INTx interrupts
+        }
+
 	if (wishbone_register(&dev->wb) < 0) {
 		printk(KERN_ALERT PCIE_WB ": could not register wishbone bus\n");
 		goto fail_msi;
 	}
 	
-        // request irq AND enable irqs
+        // request irq
 	if (request_irq(pdev->irq, irq_handler, IRQF_SHARED, "pcie_wb", dev) < 0) {
 		printk(KERN_ALERT PCIE_WB ": could not register interrupt handler\n");
 		goto fail_reg;
