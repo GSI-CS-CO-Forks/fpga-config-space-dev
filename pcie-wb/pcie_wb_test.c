@@ -470,7 +470,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	    if (dev->msi) {
 		/* disable legacy interrupts when using MSI */
 
-                printk(KERN_INFO PCIE_WB ": Enbled MSI disabling INTx irqs for Device : ID %x:\n", pdev->device);
+                printk(KERN_INFO PCIE_WB ": Enbled MSI, disabling INTx irqs for Device : ID %x:\n", pdev->device);
 		pci_intx(pdev, 0);
 	    }
 	}
@@ -478,14 +478,14 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
         if(pdev->pcie_cap && !dev->msi){
             pci_intx(pdev, 1); // enable legacy INTx interrupts
-            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for Device : ID %x:\n", pdev->device);
+            printk(KERN_INFO PCIE_WB ": Enbled legacy INTx irqs for PCIe Device : ID %x:\n", pdev->device);
         }
 
-        if((pdev->device = PMC_WB_DEVICE_ID) && intx){
+        if((pdev->device == PMC_WB_DEVICE_ID) && intx){
             pci_intx(pdev, 1); // enable INTx interrupts
 	    wb_conf = dev->pci_res[2].addr;
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); // enable PCI bridge wishbone interrupts
-            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for Device : ID %x:\n", pdev->device);
+            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for PMC Device : ID %x:\n", pdev->device);
         }
 
 	if (wishbone_register(&dev->wb) < 0) {
