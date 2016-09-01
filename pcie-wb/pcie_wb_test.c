@@ -386,6 +386,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
     int bar1; // wishbone address space
 
     unsigned char* wb_conf;
+
         printk(KERN_INFO PCIE_WB ":-----------------------------\n");
         printk(KERN_INFO PCIE_WB ": PCI Device info: \n");
 	printk(KERN_INFO PCIE_WB ": vendor        : %x\n", pdev->vendor);
@@ -467,12 +468,14 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	
 	    //if (dev->msi) {
 		/* disable legacy interrupts when using MSI */
-		pci_intx(pdev, 0); 
+		pci_intx(pdev, 0);
 	    //}
 	}else{
 
         //if(!dev->msi) {
             pci_intx(pdev, 1); // enable INTx interrupts
+	    wb_conf = dev->pci_res[2].addr;
+            iowrite32(1, wb_conf + WB_CONF_ICR_REG); // enable PCI bridge wishbone interrupts
         }
 
 	if (wishbone_register(&dev->wb) < 0) {
