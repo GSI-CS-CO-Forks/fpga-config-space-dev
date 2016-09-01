@@ -476,12 +476,12 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 
-        if((pdev->pcie_cap && !dev->msi){
+        if(pdev->pcie_cap && !dev->msi){
             pci_intx(pdev, 1); // enable legacy INTx interrupts
             printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for Device : ID %x:\n", pdev->device);
         }
 
-        if(pdev->device = PMC_WB_DEVICE_ID && intx)){
+        if((pdev->device = PMC_WB_DEVICE_ID) && intx){
             pci_intx(pdev, 1); // enable INTx interrupts
 	    wb_conf = dev->pci_res[2].addr;
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); // enable PCI bridge wishbone interrupts
