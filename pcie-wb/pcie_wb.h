@@ -55,7 +55,6 @@ struct pcie_wb_dev {
 	struct pci_dev* pci_dev;
 	struct pcie_wb_resource pci_res[3];
 	int    msi;
-    int    bus_type_pci;
 	
 	struct wishbone wb;
 	unsigned int window_offset;

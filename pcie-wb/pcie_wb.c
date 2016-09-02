@@ -28,11 +28,8 @@
 #endif
 
 static unsigned int debug = 0;
-static unsigned int debug_irqhandler = 1;
-static unsigned int irq_counter = 0;
-static unsigned int irq_counter_pmc = 0;
 
-static unsigned int msien = 1; // module parameter, enable MSI by default
+static unsigned int intx = 0; // module parameter, force INTx interrupt for PCI/PMC card
 
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,28)
@@ -274,54 +271,22 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
     unsigned char* wb_conf;
     uint32_t wb_cfg_data;
 
-    // if card is PMC with IntX interrupts, 
-    // it is likely that irq line is shared
-    if ((dev->bus_type_pci) && !(dev->msi)){
 
-	    // check that pmc card has requested IRQ
-	    // if it has not then exit
+    printk(KERN_INFO PCIE_WB ": irq from device  : %x\n", dev->pci_dev->device);
+
+    /* if card is PMC with IntX interrupts  */ 
+    /* it is likely that irq line is shared */
+    if (!(dev->pci_dev->pcie_cap) && !(dev->pci_dev->msi_enabled)){
+	    /* check that pmc card has requested IRQ */
+	    /* if it has not then exit               */
 	    wb_conf = dev->pci_res[2].addr;
-
-
-	    if (unlikely(debug_irqhandler)){
-	        irq_counter++; 
-	        printk(KERN_ALERT ":irq handler: checking IRQ status : irq count: %d : %d\n", irq_counter_pmc, irq_counter);
-	    }
 
 	    wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
 
-        if (unlikely(debug_irqhandler)){
-	        printk(KERN_ALERT ":irq handler: WB_CONF_ISR_REG : 0x%x\n", wb_cfg_data);
-	    }
-
 	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
-	        printk(KERN_ALERT ":irq handler: not PMC interrupt");
+	        printk(KERN_INFO PCIE_WB ":irq handler: not FTRN PMC interrupt");
 	        return IRQ_NONE;
 	    }
-
-
-	    if (unlikely(debug_irqhandler)){
-	        irq_counter_pmc++;	 
-	        printk(KERN_ALERT ":irq handler: IRQ executed : irq count: %d\n", irq_counter_pmc);
-	    }
-
-	    if (unlikely(debug_irqhandler)){ // debug print
-
-	        printk(KERN_ALERT PCIE_WB ": irq_handler : parameters irq: 0x%x, dev_id: 0x%x\n", irq, dev_id);
-
-	        wb_cfg_data = ioread32(wb_conf + PCI_CONF_IRQ);
-	            printk(KERN_ALERT PCIE_WB ": irq_handler : PCI_CONF_IRQ 0x%x\n", wb_cfg_data);
-
-	        wb_cfg_data = ioread32(wb_conf + WB_CONF_INT_ACK_REG);
-	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_INT_ACK_REG 0x%x\n", wb_cfg_data);
-
-	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ICR_REG);
-	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_ICR_REG 0x%x\n", wb_cfg_data);
-
-	        wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
-	            printk(KERN_ALERT PCIE_WB ": irq_handler : WB_CONF_ISR_REG 0x%x\n", wb_cfg_data);
-	    }
-
 	}
 	
 	pcie_int_enable(dev, 0);/* disable IRQ on Etherbone layer - Etherbone */
@@ -373,20 +338,20 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * reading IRQ
 	 * register char dev
 	 */
-	u8 revision;
-    u16 vendor_id;
-    u16 device_id;
-	struct pcie_wb_dev *dev;
-	unsigned char* control;
-    int bar0; // wb/eb configuration space
-    int bar1; // wishbone address space
+        struct pcie_wb_dev *dev;
+        unsigned char* control;
 
-    unsigned char* wb_conf;
-    uint32_t wb_cfg_data;
+        unsigned char* wb_conf;
+
+        printk(KERN_INFO PCIE_WB ":-----------------------------\n");
+        printk(KERN_INFO PCIE_WB ": PCI Device info: \n");
+	printk(KERN_INFO PCIE_WB ": vendor        : %x\n", pdev->vendor);
+	printk(KERN_INFO PCIE_WB ": device        : %x\n", pdev->device);
+	printk(KERN_INFO PCIE_WB ": PCIe capable  : %x\n", pdev->pcie_cap);
+	printk(KERN_INFO PCIE_WB ": irq number    : %d\n", pdev->irq);
 
 
-	pci_read_config_byte(pdev, PCI_REVISION_ID, &revision);
-	if (revision != 0x01) {
+	if (pdev->revision != 0x01) {
 		printk(KERN_ALERT PCIE_WB ": revision ID wrong!\n");
 		goto fail_out;
 	}
@@ -415,28 +380,25 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pci_set_drvdata(pdev, dev);
 
-    // check which device is being installed: PMC or PCIe and 
-    // setup bars accordingly
-	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
-	if (device_id == PMC_WB_DEVICE_ID) {
-	    printk(KERN_ALERT PCIE_WB ": Installing PMC Device : ID %x:\n", device_id);
-            bar0 = 1;
-            bar1 = 2;
-            dev->bus_type_pci = 1;
+        /* check which device is being installed: PMC or PCIe and 
+         * setup bars accordingly
+         */                                   
+	if (pdev->device == PMC_WB_DEVICE_ID) {
+	    printk(KERN_INFO PCIE_WB ": Installing PMC Device : ID %x:\n", pdev->device);
+            /* BAR0 - etherbone configuration space */
+            if (setup_bar(pdev, &dev->pci_res[0], 1) < 0) goto fail_free;
+            /* BAR1 - wishbone*/
+	    if (setup_bar(pdev, &dev->pci_res[1], 2) < 0) goto fail_bar0;
+            /* BAR0 -  PCI/WB bridge configuration space */
+            if (setup_bar(pdev, &dev->pci_res[2], 0) < 0) goto fail_bar1;
 	}else{
-            printk(KERN_ALERT PCIE_WB ": Installing PCIe Device : ID %x:\n", device_id);
-            bar0 = 0;
-            bar1 = 1;
-            dev->bus_type_pci = 0;
-    }
-
-	
-	if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
-	if (setup_bar(pdev, &dev->pci_res[1], bar1) < 0) goto fail_bar0;
-    if (device_id == PMC_WB_DEVICE_ID) {
-        // PMC - BAR0 is PCI WB bridge configuration space
-        if (setup_bar(pdev, &dev->pci_res[2], 0) < 0) goto fail_bar1;
-    }
+            printk(KERN_INFO PCIE_WB ": Installing PCIe Device : ID %x:\n", pdev->device);
+            
+            /* BAR0 - etherbone configuration space */
+	    if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
+            /* BAR1 - wishbone*/
+	    if (setup_bar(pdev, &dev->pci_res[1], bar1) < 1) goto fail_bar0;
+        }
     
 	
 	/* Initialize device registers */
@@ -444,20 +406,40 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	iowrite32(0, control + WINDOW_OFFSET_LOW);
 	iowrite32(0, control + CONTROL_REGISTER_HIGH);
 
-	pci_set_master(pdev); /* enable bus mastering => needed for MSI */
+        /* if PCIe device and want MSI or
+         * if PMC device and not forcing INTx then enable MSI
+         */
+        if((pdev->pcie_cap && dev->msi) || (!pdev->pcie_cap && !intx)){
+            pci_set_master(pdev); /* enable bus mastering => needed for MSI */
 	
-	/* enable message signaled interrupts */
-	if (pci_enable_msi(pdev) != 0) {
+	    /* enable message signaled interrupts */
+	    if (pci_enable_msi(pdev) != 0) {
 		/* resort to legacy interrupts */
 		printk(KERN_ALERT PCIE_WB ": could not enable MSI interrupting (using legacy)\n");
-		dev->msi = 0;
-	}
+	 	dev->msi = 0;
+                pci_clear_master(pdev); 
+	    }  
 	
-	if (dev->msi) {
+	    if (dev->msi) {
 		/* disable legacy interrupts when using MSI */
-		pci_intx(pdev, 0); 
+                printk(KERN_INFO PCIE_WB ": Enbled MSI, disabling INTx irqs for Device : ID %x:\n", pdev->device);
+		pci_intx(pdev, 0);
+	    }
 	}
-	
+
+
+        if(pdev->pcie_cap && !dev->msi){
+            pci_intx(pdev, 1); /* enable legacy INTx interrupts */
+            printk(KERN_INFO PCIE_WB ": Enbled legacy irqs for PCIe Device : ID %x:\n", pdev->device);
+        }
+
+        if((pdev->device == PMC_WB_DEVICE_ID) && intx){
+            pci_intx(pdev, 1); /* enable INTx interrupts on PMC device */
+	    wb_conf = dev->pci_res[2].addr;
+            iowrite32(1, wb_conf + WB_CONF_ICR_REG); /* enable PCI bridge wishbone interrupts */
+            printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for PMC Device : ID %x:\n", pdev->device);
+        }
+
 	if (wishbone_register(&dev->wb) < 0) {
 		printk(KERN_ALERT PCIE_WB ": could not register wishbone bus\n");
 		goto fail_msi;
@@ -468,7 +450,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto fail_reg;
 	}
 	
-	/* Enable classic interrupts */
+	/* Enable interrupts from wishbone */
 	pcie_int_enable(dev, 1);
 
 	return 0;
@@ -477,7 +459,7 @@ fail_reg:
 	wishbone_unregister(&dev->wb);
 fail_msi:	
 	if (dev->msi) {
-		pci_intx(pdev, 1);
+		pci_intx(pdev,0 );
 		pci_disable_msi(pdev);
 	}
 /*fail_master:*/
@@ -498,7 +480,16 @@ static void remove(struct pci_dev *pdev)
 {
 	struct pcie_wb_dev *dev;
 	
-	dev = pci_get_drvdata(pdev);
+        printk(KERN_INFO PCIE_WB ": Removing PCI Device : \n");
+	printk(KERN_INFO PCIE_WB ": vendor        : %x\n", pdev->vendor);
+	printk(KERN_INFO PCIE_WB ": device        : %x\n", pdev->device);
+	printk(KERN_INFO PCIE_WB ": PCIe capable  : %x\n", pdev->pcie_cap);
+	printk(KERN_INFO PCIE_WB ": irq number    : %d\n", pdev->irq);
+
+
+	printk(KERN_INFO PCIE_WB ":-------------------------\n");
+	
+        dev = pci_get_drvdata(pdev);
 	
 	pcie_int_enable(dev, 0);
 	free_irq(dev->pci_dev->irq, dev);
@@ -508,7 +499,7 @@ static void remove(struct pci_dev *pdev)
 		pci_disable_msi(pdev);
 	}
 	pci_clear_master(pdev);
-	if(dev->bus_type_pci){
+	if(pdev->device == PMC_WB_DEVICE_ID){
           destroy_bar(&dev->pci_res[2]);
         }
         destroy_bar(&dev->pci_res[1]);
@@ -541,10 +532,12 @@ static void __exit pcie_wb_exit(void)
 	pci_unregister_driver(&pcie_wb_driver);
 }
 
-MODULE_AUTHOR("Stefan Rauch <s.rauch@gsi.de>");
+MODULE_AUTHOR("Stefan Rauch <s.rauch@gsi.de> Dusan Slavinec <dusan.slavinec@cosylab.com>");
 MODULE_DESCRIPTION("GSI Altera-Wishbone bridge driver");
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Enable debugging information");
+module_param(intx, int, 0644);
+MODULE_PARM_DESC(intx, "Force INTx interrupt for PMC card");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PCIE_WB_VERSION);
 
