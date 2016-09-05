@@ -395,9 +395,9 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
             printk(KERN_INFO PCIE_WB ": Installing PCIe Device : ID %x:\n", pdev->device);
             
             /* BAR0 - etherbone configuration space */
-	    if (setup_bar(pdev, &dev->pci_res[0], bar0) < 0) goto fail_free;
+	    if (setup_bar(pdev, &dev->pci_res[0], 0) < 0) goto fail_free;
             /* BAR1 - wishbone*/
-	    if (setup_bar(pdev, &dev->pci_res[1], bar1) < 1) goto fail_bar0;
+	    if (setup_bar(pdev, &dev->pci_res[1], 1) < 0) goto fail_bar0;
         }
     
 	
