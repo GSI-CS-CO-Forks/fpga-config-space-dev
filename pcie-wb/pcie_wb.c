@@ -340,8 +340,8 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 */
         struct pcie_wb_dev *dev;
         unsigned char* control;
-
         unsigned char* wb_conf;
+        unsigned int data;
 
         printk(KERN_INFO PCIE_WB ":-----------------------------\n");
         printk(KERN_INFO PCIE_WB ": PCI Device info: \n");
@@ -434,9 +434,11 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
         }
 
         if((pdev->device == PMC_WB_DEVICE_ID) && intx){
-            pci_intx(pdev, 1); /* enable INTx interrupts on PMC device */
 	    wb_conf = dev->pci_res[2].addr;
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); /* enable PCI bridge wishbone interrupts */
+            
+            dev->msi = 0;
+            pci_intx(pdev, 1); /* enable INTx interrupts on PMC device */
             printk(KERN_INFO PCIE_WB ": Enbled INTx irqs for PMC Device : ID %x:\n", pdev->device);
         }
 
@@ -453,7 +455,12 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* Enable interrupts from wishbone */
 	pcie_int_enable(dev, 1);
 
-	return 0;
+
+	control = dev->pci_res[0].addr;
+	data = ioread32(control + CONTROL_REGISTER_HIGH);
+        printk(KERN_INFO PCIE_WB ": CONTROL_REGISTER_HIGH : %x:\n", data);
+	
+        return 0;
 
 fail_reg:
 	wishbone_unregister(&dev->wb);
