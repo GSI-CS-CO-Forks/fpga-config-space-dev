@@ -27,8 +27,16 @@
 #error "unknown machine byte order (endian)"
 #endif
 
-static unsigned int debug = 0; // module parameter, enable debug prints
-static unsigned int intx  = 0; // module parameter, force INTx interrupt for PCI/PMC card
+static unsigned int debug     = 0; /* module parameter, enable debug prints */
+static unsigned int debug_irq = 0; /* module parameter, enable debug prints in irq handler*/
+static unsigned int intx      = 0; /* module parameter, force INTx interrupt for PCI/PMC card */
+
+
+static unsigned int irqh_call_count = 0; /* debug counter, how many times irq_handler was called */ 
+
+/* debug counter, how many times irq_handler was executed to the end if INTx are used*/ 
+static unsigned int irqh_exec_count = 0;  
+
 
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,28)
@@ -271,24 +279,23 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
     uint32_t wb_cfg_data;
     uint16_t data;
 
-    if (unlikely(debug)){
-      printk(KERN_INFO PCIE_WB ": irq from device  : %x\n", dev->pci_dev->device);
-
-      pci_read_config_word(dev->pci_dev, PCI_STATUS, &data);
-      printk(KERN_INFO PCIE_WB ":irq handler: FTRN PMC status reg : 0x%x\n", data);
+    if (unlikely(debug_irq)){
+	irqh_call_count++;
     }
 
-    /* if card is PMC with IntX interrupts  */ 
-    /* it is likely that irq line is shared */
-    if (!(dev->pci_dev->pcie_cap) && !(dev->pci_dev->msi_enabled)){
+	/* if card is PMC with IntX interrupts  */ 
+	/* it is likely that irq line is shared */
+	if (!(dev->msi) && (dev->pci_dev->device == PMC_WB_DEVICE_ID)){
 	    /* check that pmc card has requested IRQ */
 	    /* if it has not then exit               */
             wb_conf = dev->pci_res[2].addr;
 	    wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
 
 	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
-                if (unlikely(debug)){
-                  printk(KERN_INFO PCIE_WB ":irq handler: not FTRN PMC interrupt\n");
+                if (unlikely(debug_irq)){
+                	//printk(KERN_INFO PCIE_WB ":irq handler: not FTRN PMC interrupt\n");
+			printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
+			dev->pci_dev->device, irqh_call_count,irqh_exec_count);
                 }
 	        return IRQ_NONE;
 	    }
@@ -296,7 +303,13 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	
 	pcie_int_enable(dev, 0);/* disable IRQ on Etherbone layer - Etherbone */
 	wishbone_slave_ready(&dev->wb);
-	
+
+	if (unlikely(debug_irq)){
+		irqh_exec_count++;
+		printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
+		dev->pci_dev->device, irqh_call_count,irqh_exec_count);
+	}
+
 	return IRQ_HANDLED;
 }
 
@@ -551,10 +564,16 @@ static void __exit pcie_wb_exit(void)
 
 MODULE_AUTHOR("Stefan Rauch <s.rauch@gsi.de> Dusan Slavinec <dusan.slavinec@cosylab.com>");
 MODULE_DESCRIPTION("GSI Altera-Wishbone bridge driver");
+
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Enable debugging information");
+
+module_param(debug_irq, int, 0644);
+MODULE_PARM_DESC(debug_irq, "Enable debugging information in interrupt handler");
+
 module_param(intx, int, 0644);
 MODULE_PARM_DESC(intx, "Force INTx interrupt for PMC card");
+
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PCIE_WB_VERSION);
 
