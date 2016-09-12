@@ -143,15 +143,15 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	
 	switch (dev->width) {
 	case 4:	
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": iowrite32(0x%x, 0x%x)\n", data, addr & ~3);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%x, D:0x%x\n", addr & ~3, data);
 		iowrite32(data, window + (addr & WINDOW_LOW)); 
 		break;
 	case 2: 
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": iowrite16(0x%x, 0x%x)\n", data >> dev->shift, (addr & ~3) + dev->low_addr);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite16 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
 		iowrite16(data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	case 1: 
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": iowrite8(0x%x, 0x%x)\n", data >> dev->shift, (addr & ~3) + dev->low_addr);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite8 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
 		iowrite8 (data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	}
@@ -177,16 +177,16 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	
 	switch (dev->width) {
 	case 4:	
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread32(0x%x)\n", addr & ~3);
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%x, D:0x%x\n", addr & ~3,out);
 		break;
 	case 2: 
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread16(0x%x)\n", (addr & ~3) + dev->low_addr);
 		out = ((wb_data_t)ioread16(window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread16 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr,out);
 		break;
 	case 1: 
-		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread8(0x%x)\n", (addr & ~3) + dev->low_addr);
 		out = ((wb_data_t)ioread8 (window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread8 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, out);
 		break;
 	default: /* technically should be unreachable */
 		out = 0;
@@ -236,10 +236,10 @@ static int wb_request(struct wishbone *wb, struct wishbone_request *req)
 	req->mask  = ctl & 0xf;
 	req->write = (ctl & 0x40000000) != 0;
 	
-	if (unlikely(debug)) printk(KERN_ALERT "request %x\n", ctl);
 	out = (ctl & 0x80000000) != 0;
 	
 	if (out) iowrite32(1, control + MASTER_CTL_HIGH); /* dequeue operation */
+	if (unlikely(debug)) printk(KERN_DEBUG "request ctl:%x out:%x\n", ctl, out);
 	
 	pcie_int_enable(dev, 1);
 	
@@ -254,10 +254,10 @@ static void wb_reply(struct wishbone *wb, int err, wb_data_t data)
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
 	
-	if (unlikely(debug)) printk(KERN_ALERT "pushing reply\n");
-	
 	iowrite32(data, control + MASTER_DAT_LOW);
 	iowrite32(err+2, control + MASTER_CTL_HIGH);
+	
+	if (unlikely(debug)) printk(KERN_DEBUG "pushing reply MDL:%x MCH:%h\n", data, err+2);
 }
 
 static const struct wishbone_operations wb_ops = {
@@ -273,15 +273,15 @@ static const struct wishbone_operations wb_ops = {
 
 static irqreturn_t irq_handler(int irq, void *dev_id)
 {
-    struct pcie_wb_dev *dev = dev_id;
+	struct pcie_wb_dev *dev = dev_id;
 
-    unsigned char* wb_conf;
-    uint32_t wb_cfg_data;
-    uint16_t data;
+	unsigned char* wb_conf;
+	uint32_t wb_cfg_data;
+	uint16_t data;
 
-    if (unlikely(debug_irq)){
-	irqh_call_count++;
-    }
+	if (unlikely(debug_irq)){
+		irqh_call_count++;
+	}
 
 	/* if card is PMC with IntX interrupts  */ 
 	/* it is likely that irq line is shared */
