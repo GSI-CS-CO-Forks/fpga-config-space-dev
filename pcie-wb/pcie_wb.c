@@ -29,7 +29,7 @@
 
 static unsigned int debug     = 0; /* module parameter, enable debug prints */
 static unsigned int debug_irq = 0; /* module parameter, enable debug prints in irq handler*/
-static unsigned int intx      = 0; /* module parameter, force INTx interrupt for PCI/PMC card */
+static unsigned int pmcintx   = 1; /* module parameter, force INTx interrupt for PCI/PMC card */
 
 
 static unsigned int irqh_call_count = 0; /* debug counter, how many times irq_handler was called */ 
@@ -143,15 +143,15 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	
 	switch (dev->width) {
 	case 4:	
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%x, D:0x%x\n", addr & ~3, data);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%08x, D:0x%08x\n", addr & ~3, data);
 		iowrite32(data, window + (addr & WINDOW_LOW)); 
 		break;
 	case 2: 
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite16 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite16 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
 		iowrite16(data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	case 1: 
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite8 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite8 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
 		iowrite8 (data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	}
@@ -178,15 +178,15 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	switch (dev->width) {
 	case 4:	
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%x, D:0x%x\n", addr & ~3,out);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%08x, D:0x%08x\n", addr & ~3,out);
 		break;
 	case 2: 
 		out = ((wb_data_t)ioread16(window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread16 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr,out);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread16 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr,out);
 		break;
 	case 1: 
 		out = ((wb_data_t)ioread8 (window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread8 A:0x%x, D:0x%x\n", (addr & ~3) + dev->low_addr, out);
+		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread8 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, out);
 		break;
 	default: /* technically should be unreachable */
 		out = 0;
@@ -239,9 +239,10 @@ static int wb_request(struct wishbone *wb, struct wishbone_request *req)
 	out = (ctl & 0x80000000) != 0;
 	
 	if (out) iowrite32(1, control + MASTER_CTL_HIGH); /* dequeue operation */
-	if (unlikely(debug)) printk(KERN_DEBUG "request ctl:%x out:%x\n", ctl, out);
+	if (unlikely(debug)) printk(KERN_DEBUG "request ctl:%08x out:%08x\n", ctl, out);
 	
 	pcie_int_enable(dev, 1);
+        ioread32(control + MASTER_CTL_HIGH); /* dummy read to ensure previous write */
 	
 	return out;
 }
@@ -256,8 +257,9 @@ static void wb_reply(struct wishbone *wb, int err, wb_data_t data)
 	
 	iowrite32(data, control + MASTER_DAT_LOW);
 	iowrite32(err+2, control + MASTER_CTL_HIGH);
-	
-	if (unlikely(debug)) printk(KERN_DEBUG "pushing reply MDL:%x MCH:%h\n", data, err+2);
+	ioread32(control + MASTER_CTL_HIGH);/* dummy read to push previous writes */
+
+	if (unlikely(debug)) printk(KERN_DEBUG "pushing reply MASTER_DAT_LOW:%x, MASTER_CTL_HIGH:%x\n", data, err+2);
 }
 
 static const struct wishbone_operations wb_ops = {
@@ -431,7 +433,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
          * if device is PMC and INTx interrups are not forced 
          * then enable MSI
          */
-        if((pdev->pcie_cap && dev->msi) || (!pdev->pcie_cap && !intx)){
+        if((pdev->pcie_cap && dev->msi) || ((pdev->device == PMC_WB_DEVICE_ID)&& !pmcintx)){
             pci_set_master(pdev); /* enable bus mastering => needed for MSI */
 	
 	    /* enable message signaled interrupts */
@@ -456,7 +458,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
         }
 
         /* Enable INTx interrupts on PMC device if forced */
-        if((pdev->device == PMC_WB_DEVICE_ID) && intx){
+        if((pdev->device == PMC_WB_DEVICE_ID) && pmcintx){
 	    wb_conf = dev->pci_res[2].addr;
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); /* enable wishbone interrupts to the PCI core */
             
@@ -571,8 +573,8 @@ MODULE_PARM_DESC(debug, "Enable debugging information");
 module_param(debug_irq, int, 0644);
 MODULE_PARM_DESC(debug_irq, "Enable debugging information in interrupt handler");
 
-module_param(intx, int, 0644);
-MODULE_PARM_DESC(intx, "Force INTx interrupt for PMC card");
+module_param(pmcintx, int, 0644);
+MODULE_PARM_DESC(pmcintx, "Force INTx interrupt for PMC card");
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PCIE_WB_VERSION);
