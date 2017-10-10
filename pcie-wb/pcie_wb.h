@@ -20,6 +20,8 @@
 #define SDWB_ADDRESS_HIGH	24
 #define SDWB_ADDRESS_LOW	28
 
+#define PMC_IRQ_CONTROL         32
+
 #define MASTER_CTL_HIGH		64
 #define MASTER_CTL_LOW		68
 #define MASTER_ADR_HIGH		72

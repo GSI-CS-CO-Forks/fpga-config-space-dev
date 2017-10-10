@@ -29,7 +29,7 @@
 
 static unsigned int debug     = 0; /* module parameter, enable debug prints */
 static unsigned int debug_irq = 0; /* module parameter, enable debug prints in irq handler*/
-static unsigned int pmcintx   = 1; /* module parameter, force INTx interrupt for PCI/PMC card */
+static unsigned int pmcintx   = 0; /* module parameter, force INTx interrupt for PCI/PMC card */
 
 
 static unsigned int irqh_call_count = 0; /* debug counter, how many times irq_handler was called */ 
@@ -58,8 +58,17 @@ static void compat_pci_clear_master(struct pci_dev *dev)
 
 static void pcie_int_enable(struct pcie_wb_dev *dev, int on)
 {
-	int enable = on && !dev->msi;
-	iowrite32((enable?0x20000000UL:0) + 0x10000000UL, dev->pci_res[0].addr + CONTROL_REGISTER_HIGH);
+	int enable;
+
+    /* enable/disable interrupts for pmc device */
+    if(dev->pci_dev->device == PMC_WB_DEVICE_ID){
+        iowrite32((on ? 0x20000000UL:0) + 0x10000000UL, dev->pci_res[0].addr + CONTROL_REGISTER_HIGH);
+        ioread32(dev->pci_res[0].addr + CONTROL_REGISTER_HIGH); /*dummy read to be sure that write was executed*/
+    }
+    else{
+        enable = on && !dev->msi;
+	    iowrite32((enable ? 0x20000000UL:0) + 0x10000000UL, dev->pci_res[0].addr + CONTROL_REGISTER_HIGH);
+    }
 }
 
 static void wb_cycle(struct wishbone* wb, int on)
@@ -140,7 +149,7 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
-	
+
 	switch (dev->width) {
 	case 4:	
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%08x, D:0x%08x\n", addr & ~3, data);
@@ -174,7 +183,7 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
-	
+
 	switch (dev->width) {
 	case 4:	
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
@@ -279,7 +288,6 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 
 	unsigned char* wb_conf;
 	uint32_t wb_cfg_data;
-	uint16_t data;
 
 	if (unlikely(debug_irq)){
 		irqh_call_count++;
@@ -361,15 +369,15 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
         struct pcie_wb_dev *dev;
         unsigned char* control;
         unsigned char* wb_conf;
-        unsigned int data;
+//        unsigned int data;
 
 	if(unlikely(debug)){
 		printk(KERN_INFO PCIE_WB ":-----------------------------\n");
-		printk(KERN_INFO PCIE_WB ": PCI Device info: \n");
-		printk(KERN_INFO PCIE_WB ": vendor        : %x\n", pdev->vendor);
-		printk(KERN_INFO PCIE_WB ": device        : %x\n", pdev->device);
-		printk(KERN_INFO PCIE_WB ": PCIe capable  : %x\n", pdev->pcie_cap);
-		printk(KERN_INFO PCIE_WB ": irq number    : %d\n", pdev->irq);
+		printk(KERN_INFO PCIE_WB ": PCI Device info\n");
+		printk(KERN_INFO PCIE_WB ": vendor        : %04x\n", pdev->vendor);
+		printk(KERN_INFO PCIE_WB ": device        : %04x\n", pdev->device);
+		printk(KERN_INFO PCIE_WB ": PCIe capable  : %04x\n", pdev->pcie_cap);
+		printk(KERN_INFO PCIE_WB ": irq number    : %d\n"  , pdev->irq);
 		printk(KERN_INFO PCIE_WB ":-----------------------------\n");
         }
 
@@ -429,43 +437,60 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	iowrite32(0, control + WINDOW_OFFSET_LOW);
 	iowrite32(0, control + CONTROL_REGISTER_HIGH);
 
-        /* if device is PCIe and wants MSI or
-         * if device is PMC and INTx interrups are not forced 
-         * then enable MSI
-         */
-        if((pdev->pcie_cap && dev->msi) || ((pdev->device == PMC_WB_DEVICE_ID)&& !pmcintx)){
+
+    /* Configure interrupts*/
+
+    /* configure if device is PCIe and wants MSI */
+    if(pdev->device != PMC_WB_DEVICE_ID){
+        if(pdev->pcie_cap && dev->msi){
             pci_set_master(pdev); /* enable bus mastering => needed for MSI */
-	
-	    /* enable message signaled interrupts */
-	    if (pci_enable_msi(pdev) != 0) {
-		/* resort to legacy interrupts */
-		printk(KERN_ALERT PCIE_WB ": Could not enable MSI interrupting (using legacy)\n");
-	 	dev->msi = 0;
+
+            /* enable message signaled interrupts */
+            if (pci_enable_msi(pdev) != 0) {
+                /* resort to legacy interrupts if MSI enable failed*/
+                printk(KERN_ALERT PCIE_WB ": Could not enable MSI interrupting (using legacy)\n");
+                dev->msi = 0;
                 pci_clear_master(pdev); 
-	    }  
-	
-	    if (dev->msi) {
-		/* disable legacy interrupts when using MSI */
-                printk(KERN_INFO PCIE_WB ": Enabled MSI, disabling INTx interrupts for Device : ID %x:\n", pdev->device);
-		pci_intx(pdev, 0);
-	    }
-	}
 
+                pci_intx(pdev, 1); /* enable legacy INTx interrupts for PCIe device*/
+                printk(KERN_INFO PCIE_WB ": Enabled legacy interrupts for PCIe Device : ID %x:\n", pdev->device);
+            }
+            else{
+                /* disable legacy interrupts when using MSI */
+                printk(KERN_INFO PCIE_WB ": Enabled MSI, disabling INTx interrupts for PCIe Device : ID %x:\n", pdev->device);
+                pci_intx(pdev, 0);
+            }
+    	}
+    }
+    else{
+        /* configure interrupts for pmc device */
+//        if(pdev->device == PMC_WB_DEVICE_ID){
+          wb_conf = dev->pci_res[2].addr;
 
-        if(pdev->pcie_cap && !dev->msi){
-            pci_intx(pdev, 1); /* enable legacy INTx interrupts for PCIe device*/
-            printk(KERN_INFO PCIE_WB ": Enabled legacy interrupts for PCIe Device : ID %x:\n", pdev->device);
-        }
-
-        /* Enable INTx interrupts on PMC device if forced */
-        if((pdev->device == PMC_WB_DEVICE_ID) && pmcintx){
-	    wb_conf = dev->pci_res[2].addr;
+          /* Enable INTx interrupts on PMC device */
+          if(pmcintx){
             iowrite32(1, wb_conf + WB_CONF_ICR_REG); /* enable wishbone interrupts to the PCI core */
-            
+            iowrite32(0x10, control + PMC_IRQ_CONTROL); /* enable INTx interrupts to wishbone */
+
             dev->msi = 0;
             pci_intx(pdev, 1); /* enable INTx interrupts on PMC device */
             printk(KERN_INFO PCIE_WB ": Enabled INTx interrupts for PMC Device : ID %x:\n", pdev->device);
-        }
+          }
+          else{ /* enable MSI */
+            pci_set_master(pdev); /* enable bus mastering => needed for MSI */
+	
+		    /* enable message signaled interrupts */
+		    if (pci_enable_msi(pdev) != 0) {
+			    printk(KERN_ALERT PCIE_WB ": Could not enable MSI interrupting on PMC device\n");
+		     	dev->msi = 0;
+    		    pci_clear_master(pdev); 
+            }
+            else{
+                iowrite32(0x1, control + PMC_IRQ_CONTROL); /* enable MSI interrupts to wishbone */
+            }  
+          }
+    }
+
 
 	if (wishbone_register(&dev->wb) < 0) {
 		printk(KERN_ALERT PCIE_WB ": could not register wishbone bus\n");
@@ -510,9 +535,9 @@ static void remove(struct pci_dev *pdev)
 	if(unlikely(debug)){	
 		printk(KERN_INFO PCIE_WB ":-------------------------\n");
 		printk(KERN_INFO PCIE_WB ": Removing PCI Device : \n");
-		printk(KERN_INFO PCIE_WB ": vendor        : %x\n", pdev->vendor);
-		printk(KERN_INFO PCIE_WB ": device        : %x\n", pdev->device);
-		printk(KERN_INFO PCIE_WB ": PCIe capable  : %x\n", pdev->pcie_cap);
+		printk(KERN_INFO PCIE_WB ": vendor        : %04x\n", pdev->vendor);
+		printk(KERN_INFO PCIE_WB ": device        : %04x\n", pdev->device);
+		printk(KERN_INFO PCIE_WB ": PCIe capable  : %04x\n", pdev->pcie_cap);
 		printk(KERN_INFO PCIE_WB ": irq number    : %d\n", pdev->irq);
 		printk(KERN_INFO PCIE_WB ":-------------------------\n");
         }
