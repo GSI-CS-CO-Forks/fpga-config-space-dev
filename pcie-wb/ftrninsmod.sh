@@ -10,7 +10,8 @@ sleep 1s
 echo "-------------------------------------------------------------------"
 echo "Inserting FTRN kernel modules"
 insmod wishbone.ko
-insmod pcie_wb.ko pmcintx=0 debug=0
+sleep 0.5s
+insmod pcie_wb.ko pmcintx=1 debug=0
 
 echo "Checking FTRN kernel modules"
 echo "-------------------------------------------------------------------"

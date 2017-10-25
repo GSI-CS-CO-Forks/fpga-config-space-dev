@@ -12,6 +12,8 @@
 #include <linux/version.h>
 #include <linux/miscdevice.h>
 
+#include <linux/delay.h>
+
 #include <asm/io.h>
 #include <asm/spinlock.h>
 #include <asm/byteorder.h>
@@ -36,6 +38,12 @@ static unsigned int irqh_call_count = 0; /* debug counter, how many times irq_ha
 
 /* debug counter, how many times irq_handler was executed to the end if INTx are used*/ 
 static unsigned int irqh_exec_count = 0;  
+
+static unsigned int numofwrites = 0;
+static unsigned int numofreads  = 0;
+
+static unsigned long rdudly = 0;
+static unsigned long wrudly = 0;
 
 
 
@@ -75,7 +83,10 @@ static void wb_cycle(struct wishbone* wb, int on)
 {
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
-	
+
+        numofwrites = 0;
+        numofreads  = 0;
+
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
 	
@@ -138,7 +149,7 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
 	unsigned char* window;
-	wb_addr_t window_offset;
+	wb_addr_t window_offset, dummy;
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
@@ -147,13 +158,23 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	window_offset = addr & WINDOW_HIGH;
 	if (unlikely(window_offset != dev->window_offset)) {
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
+                dummy = ioread32(control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
+
+        numofwrites++;
+
+	mb(); /* ensure serial ordering of non-posted operations for wishbone */
+
+//        if(numofwrites == 255) printk(KERN_DEBUG PCIE_WB "wr32 %3d in this cycle\n", numofwrites);
 
 	switch (dev->width) {
 	case 4:	
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%08x, D:0x%08x\n", addr & ~3, data);
-		iowrite32(data, window + (addr & WINDOW_LOW)); 
+//                printk(KERN_DEBUG PCIE_WB "pre iowr32 %3d\n", numofwrites);
+		iowrite32(data, window + (addr & WINDOW_LOW));
+//                printk(KERN_DEBUG PCIE_WB "post iowr32 %3d\n", numofwrites);
+//                dummy = ioread32(window + (addr & WINDOW_LOW));  
 		break;
 	case 2: 
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite16 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
@@ -164,6 +185,10 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 		iowrite8 (data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	}
+
+//        if(wrudly) udelay(wrudly);
+        if(wrudly) ndelay(wrudly);
+
 }
 
 static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
@@ -172,7 +197,7 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
 	unsigned char* window;
-	wb_addr_t window_offset;
+	wb_addr_t window_offset, dummy;
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
@@ -181,13 +206,21 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	window_offset = addr & WINDOW_HIGH;
 	if (unlikely(window_offset != dev->window_offset)) {
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
+//		dummy = ioread32(control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
+
+	mb(); /* ensure serial ordering of non-posted operations for wishbone */
+
+        numofreads++;
+//        if(numofreads == 255) printk(KERN_DEBUG PCIE_WB "rd32 %3d in this cycle\n", numofreads);
+
 
 	switch (dev->width) {
 	case 4:	
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%08x, D:0x%08x\n", addr & ~3,out);
+//                printk(KERN_DEBUG PCIE_WB " post iord32 %3d\n", numofreads);
 		break;
 	case 2: 
 		out = ((wb_data_t)ioread16(window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
@@ -203,7 +236,8 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	}
 
 	mb(); /* ensure serial ordering of non-posted operations for wishbone */
-	
+//        if(rdudly) udelay(rdudly);
+        if(rdudly) ndelay(rdudly);
 	return out;
 }
 
@@ -600,6 +634,13 @@ MODULE_PARM_DESC(debug_irq, "Enable debugging information in interrupt handler")
 
 module_param(pmcintx, int, 0644);
 MODULE_PARM_DESC(pmcintx, "Force INTx interrupt for PMC card");
+
+module_param(wrudly, long, 0644);
+MODULE_PARM_DESC(wrudly, "Delay in usec after wb_write");
+
+module_param(rdudly, long, 0644);
+MODULE_PARM_DESC(rdudly, "Delay in usec after wb_read");
+
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PCIE_WB_VERSION);
