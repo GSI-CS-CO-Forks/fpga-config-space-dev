@@ -166,15 +166,10 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 
 	mb(); /* ensure serial ordering of non-posted operations for wishbone */
 
-//        if(numofwrites == 255) printk(KERN_DEBUG PCIE_WB "wr32 %3d in this cycle\n", numofwrites);
-
 	switch (dev->width) {
 	case 4:	
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%08x, D:0x%08x\n", addr & ~3, data);
-//                printk(KERN_DEBUG PCIE_WB "pre iowr32 %3d\n", numofwrites);
 		iowrite32(data, window + (addr & WINDOW_LOW));
-//                printk(KERN_DEBUG PCIE_WB "post iowr32 %3d\n", numofwrites);
-//                dummy = ioread32(window + (addr & WINDOW_LOW));  
 		break;
 	case 2: 
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite16 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, data >> dev->shift);
@@ -186,7 +181,6 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 		break;
 	}
 
-//        if(wrudly) udelay(wrudly);
         if(wrudly) ndelay(wrudly);
 
 }
@@ -197,7 +191,7 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
 	unsigned char* window;
-	wb_addr_t window_offset, dummy;
+	wb_addr_t window_offset;
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
@@ -206,21 +200,15 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	window_offset = addr & WINDOW_HIGH;
 	if (unlikely(window_offset != dev->window_offset)) {
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
-//		dummy = ioread32(control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
 
 	mb(); /* ensure serial ordering of non-posted operations for wishbone */
 
-        numofreads++;
-//        if(numofreads == 255) printk(KERN_DEBUG PCIE_WB "rd32 %3d in this cycle\n", numofreads);
-
-
 	switch (dev->width) {
 	case 4:	
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%08x, D:0x%08x\n", addr & ~3,out);
-//                printk(KERN_DEBUG PCIE_WB " post iord32 %3d\n", numofreads);
 		break;
 	case 2: 
 		out = ((wb_data_t)ioread16(window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
@@ -236,7 +224,6 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	}
 
 	mb(); /* ensure serial ordering of non-posted operations for wishbone */
-//        if(rdudly) udelay(rdudly);
         if(rdudly) ndelay(rdudly);
 	return out;
 }
@@ -337,8 +324,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 
 	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
                 if (unlikely(debug_irq)){
-                	//printk(KERN_INFO PCIE_WB ":irq handler: not FTRN PMC interrupt\n");
-			printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
+ 			printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
 			dev->pci_dev->device, irqh_call_count,irqh_exec_count);
                 }
 	        return IRQ_NONE;
@@ -403,7 +389,6 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
         struct pcie_wb_dev *dev;
         unsigned char* control;
         unsigned char* wb_conf;
-//        unsigned int data;
 
 	if(unlikely(debug)){
 		printk(KERN_INFO PCIE_WB ":-----------------------------\n");
@@ -498,7 +483,6 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
     }
     else{
         /* configure interrupts for pmc device */
-//        if(pdev->device == PMC_WB_DEVICE_ID){
           wb_conf = dev->pci_res[2].addr;
 
           /* Enable INTx interrupts on PMC device */
@@ -636,10 +620,10 @@ module_param(pmcintx, int, 0644);
 MODULE_PARM_DESC(pmcintx, "Force INTx interrupt for PMC card");
 
 module_param(wrudly, long, 0644);
-MODULE_PARM_DESC(wrudly, "Delay in usec after wb_write");
+MODULE_PARM_DESC(wrudly, "Delay in nsec after wb_write");
 
 module_param(rdudly, long, 0644);
-MODULE_PARM_DESC(rdudly, "Delay in usec after wb_read");
+MODULE_PARM_DESC(rdudly, "Delay in nsec after wb_read");
 
 
 MODULE_LICENSE("GPL");
