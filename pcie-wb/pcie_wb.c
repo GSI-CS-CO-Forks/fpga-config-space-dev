@@ -12,8 +12,6 @@
 #include <linux/version.h>
 #include <linux/miscdevice.h>
 
-#include <linux/delay.h>
-
 #include <asm/io.h>
 #include <asm/spinlock.h>
 #include <asm/byteorder.h>
@@ -32,18 +30,6 @@
 static unsigned int debug     = 0; /* module parameter, enable debug prints */
 static unsigned int debug_irq = 0; /* module parameter, enable debug prints in irq handler*/
 static unsigned int pmcintx   = 0; /* module parameter, force INTx interrupt for PCI/PMC card */
-
-
-static unsigned int irqh_call_count = 0; /* debug counter, how many times irq_handler was called */ 
-
-/* debug counter, how many times irq_handler was executed to the end if INTx are used*/ 
-static unsigned int irqh_exec_count = 0;  
-
-static unsigned int numofwrites = 0;
-static unsigned int numofreads  = 0;
-
-static unsigned long rdudly = 0;
-static unsigned long wrudly = 0;
 
 
 
@@ -83,10 +69,7 @@ static void wb_cycle(struct wishbone* wb, int on)
 {
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
-
-        numofwrites = 0;
-        numofreads  = 0;
-
+	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
 	
@@ -149,7 +132,7 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	struct pcie_wb_dev* dev;
 	unsigned char* control;
 	unsigned char* window;
-	wb_addr_t window_offset, dummy;
+	wb_addr_t window_offset;
 	
 	dev = container_of(wb, struct pcie_wb_dev, wb);
 	control = dev->pci_res[0].addr;
@@ -158,14 +141,9 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 	window_offset = addr & WINDOW_HIGH;
 	if (unlikely(window_offset != dev->window_offset)) {
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
-                dummy = ioread32(control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
-
-        numofwrites++;
-
-	mb(); /* ensure serial ordering of non-posted operations for wishbone */
-
+	
 	switch (dev->width) {
 	case 4:	
 		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": iowrite32 A:0x%08x, D:0x%08x\n", addr & ~3, data);
@@ -180,9 +158,6 @@ static void wb_write(struct wishbone* wb, wb_addr_t addr, wb_data_t data)
 		iowrite8 (data >> dev->shift, window + (addr & WINDOW_LOW) + dev->low_addr); 
 		break;
 	}
-
-        if(wrudly) ndelay(wrudly);
-
 }
 
 static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
@@ -202,21 +177,19 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 		iowrite32(window_offset, control + WINDOW_OFFSET_LOW);
 		dev->window_offset = window_offset;
 	}
-
-	mb(); /* ensure serial ordering of non-posted operations for wishbone */
-
+	
 	switch (dev->width) {
 	case 4:	
+		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread32(0x%x)\n", addr & ~3);
 		out = ((wb_data_t)ioread32(window + (addr & WINDOW_LOW)));
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread32 A:0x%08x, D:0x%08x\n", addr & ~3,out);
 		break;
 	case 2: 
+		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread16(0x%x)\n", (addr & ~3) + dev->low_addr);
 		out = ((wb_data_t)ioread16(window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread16 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr,out);
 		break;
 	case 1: 
+		if (unlikely(debug)) printk(KERN_ALERT PCIE_WB ": ioread8(0x%x)\n", (addr & ~3) + dev->low_addr);
 		out = ((wb_data_t)ioread8 (window + (addr & WINDOW_LOW) + dev->low_addr)) << dev->shift;
-		if (unlikely(debug)) printk(KERN_DEBUG PCIE_WB ": ioread8 A:0x%08x, D:0x%08x\n", (addr & ~3) + dev->low_addr, out);
 		break;
 	default: /* technically should be unreachable */
 		out = 0;
@@ -224,7 +197,7 @@ static wb_data_t wb_read(struct wishbone* wb, wb_addr_t addr)
 	}
 
 	mb(); /* ensure serial ordering of non-posted operations for wishbone */
-        if(rdudly) ndelay(rdudly);
+	
 	return out;
 }
 
@@ -269,10 +242,8 @@ static int wb_request(struct wishbone *wb, struct wishbone_request *req)
 	out = (ctl & 0x80000000) != 0;
 	
 	if (out) iowrite32(1, control + MASTER_CTL_HIGH); /* dequeue operation */
-	if (unlikely(debug)) printk(KERN_DEBUG "request ctl:%08x out:%08x\n", ctl, out);
 	
 	pcie_int_enable(dev, 1);
-        ioread32(control + MASTER_CTL_HIGH); /* dummy read to ensure previous write */
 	
 	return out;
 }
@@ -287,9 +258,6 @@ static void wb_reply(struct wishbone *wb, int err, wb_data_t data)
 	
 	iowrite32(data, control + MASTER_DAT_LOW);
 	iowrite32(err+2, control + MASTER_CTL_HIGH);
-	ioread32(control + MASTER_CTL_HIGH);/* dummy read to push previous writes */
-
-	if (unlikely(debug)) printk(KERN_DEBUG "pushing reply MASTER_DAT_LOW:%x, MASTER_CTL_HIGH:%x\n", data, err+2);
 }
 
 static const struct wishbone_operations wb_ops = {
@@ -310,10 +278,6 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	unsigned char* wb_conf;
 	uint32_t wb_cfg_data;
 
-	if (unlikely(debug_irq)){
-		irqh_call_count++;
-	}
-
 	/* if card is PMC with IntX interrupts  */ 
 	/* it is likely that irq line is shared */
 	if (!(dev->msi) && (dev->pci_dev->device == PMC_WB_DEVICE_ID)){
@@ -323,23 +287,13 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	    wb_cfg_data = ioread32(wb_conf + WB_CONF_ISR_REG);
 
 	    if (!(wb_cfg_data & WB_CONF_IRQ_STATUS_MASK)){	
-                if (unlikely(debug_irq)){
- 			printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
-			dev->pci_dev->device, irqh_call_count,irqh_exec_count);
-                }
-	        return IRQ_NONE;
+	      return IRQ_NONE;
 	    }
 	}
 	
 	pcie_int_enable(dev, 0);/* disable IRQ on Etherbone layer - Etherbone */
 	wishbone_slave_ready(&dev->wb);
-
-	if (unlikely(debug_irq)){
-		irqh_exec_count++;
-		printk(KERN_DEBUG PCIE_WB ": irq handler: device %x, called: %d, handled: %d\n", 
-		dev->pci_dev->device, irqh_call_count,irqh_exec_count);
-	}
-
+	
 	return IRQ_HANDLED;
 }
 
@@ -386,9 +340,9 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * reading IRQ
 	 * register char dev
 	 */
-        struct pcie_wb_dev *dev;
-        unsigned char* control;
-        unsigned char* wb_conf;
+  struct pcie_wb_dev *dev;
+  unsigned char* control;
+  unsigned char* wb_conf;
 
 	if(unlikely(debug)){
 		printk(KERN_INFO PCIE_WB ":-----------------------------\n");
@@ -429,21 +383,19 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pci_set_drvdata(pdev, dev);
 
-        /* check which device is being installed: PMC or PCIe and 
-         * setup bars accordingly
-         */                                   
+  /* check which device is being installed: PMC or PCIe and setup bars accordingly */                                   
 	if (pdev->device == PMC_WB_DEVICE_ID) {
-		printk(KERN_INFO PCIE_WB ": Requesting BARs for PMC Device : ID %x:\n", pdev->device);
+		printk(KERN_INFO PCIE_WB ": Requesting BARs for PMC Device : %04x:%04x\n", pdev->vendor, pdev->device);
 		/* BAR1 - etherbone configuration space */
 		if (setup_bar(pdev, &dev->pci_res[0], 1) < 0) goto fail_free;
-            	/* BAR2 - wishbone */
+    /* BAR2 - wishbone */
 		if (setup_bar(pdev, &dev->pci_res[1], 2) < 0) goto fail_bar0;
-		
+	
 		/* BAR0 -  PCI/WB bridge configuration space */
 		if (setup_bar(pdev, &dev->pci_res[2], 0) < 0) goto fail_bar1;
 	}else{
-		printk(KERN_INFO PCIE_WB ": Requesting BARs for PCIe Device : ID %x:\n", pdev->device);
-            
+		printk(KERN_INFO PCIE_WB ": Requesting BARs for PCIe Device : %04x:%04x\n", pdev->vendor, pdev->device);
+
 		/* BAR0 - etherbone configuration space */
 		if (setup_bar(pdev, &dev->pci_res[0], 0) < 0) goto fail_free;
 		/* BAR1 - wishbone */
@@ -451,10 +403,10 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
         }
     
 	
-	/* Initialize device registers */
-	control = dev->pci_res[0].addr;
-	iowrite32(0, control + WINDOW_OFFSET_LOW);
-	iowrite32(0, control + CONTROL_REGISTER_HIGH);
+	  /* Initialize device registers */
+	  control = dev->pci_res[0].addr;
+	  iowrite32(0, control + WINDOW_OFFSET_LOW);
+	  iowrite32(0, control + CONTROL_REGISTER_HIGH);
 
 
     /* Configure interrupts*/
@@ -472,11 +424,11 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
                 pci_clear_master(pdev); 
 
                 pci_intx(pdev, 1); /* enable legacy INTx interrupts for PCIe device*/
-                printk(KERN_INFO PCIE_WB ": Enabled legacy interrupts for PCIe Device : ID %x:\n", pdev->device);
+                printk(KERN_INFO PCIE_WB ": Enabled legacy interrupts for PCIe Device : %04x:%04x\n", pdev->vendor, pdev->device);
             }
             else{
                 /* disable legacy interrupts when using MSI */
-                printk(KERN_INFO PCIE_WB ": Enabled MSI, disabling INTx interrupts for PCIe Device : ID %x:\n", pdev->device);
+                printk(KERN_INFO PCIE_WB ": Enabled MSI, disabling INTx interrupts for PCIe Device : %04x:%04x\n", pdev->vendor, pdev->device);
                 pci_intx(pdev, 0);
             }
     	}
@@ -492,7 +444,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
             dev->msi = 0;
             pci_intx(pdev, 1); /* enable INTx interrupts on PMC device */
-            printk(KERN_INFO PCIE_WB ": Enabled INTx interrupts for PMC Device : ID %x:\n", pdev->device);
+            printk(KERN_INFO PCIE_WB ": Enabled INTx interrupts for PMC Device : %04x:%04x\n", pdev->vendor, pdev->device);
           }
           else{ /* enable MSI */
             pci_set_master(pdev); /* enable bus mastering => needed for MSI */
@@ -523,7 +475,7 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* Enable interrupts from wishbone */
 	pcie_int_enable(dev, 1);
 	
-        return 0;
+  return 0;
 
 fail_reg:
 	wishbone_unregister(&dev->wb);
@@ -574,18 +526,18 @@ static void remove(struct pci_dev *pdev)
 	
 	if(pdev->device == PMC_WB_DEVICE_ID){
 		destroy_bar(&dev->pci_res[2]);
-        }
-        destroy_bar(&dev->pci_res[1]);
+  }
+  destroy_bar(&dev->pci_res[1]);
 	destroy_bar(&dev->pci_res[0]);
 	kfree(dev);
 
-	printk(KERN_INFO PCIE_WB ": Removed Device %x : %x\n", pdev->vendor, pdev->device);
+	printk(KERN_INFO PCIE_WB ": Removed Device %04x:%04x\n", pdev->vendor, pdev->device);
 	pci_disable_device(pdev);
 }
 
 static struct pci_device_id ids[] = {
 	{ PCI_DEVICE(PCIE_WB_VENDOR_ID, PCIE_WB_DEVICE_ID), },
-        { PCI_DEVICE(PCIE_WB_VENDOR_ID, PMC_WB_DEVICE_ID ), },
+  { PCI_DEVICE(PCIE_WB_VENDOR_ID, PMC_WB_DEVICE_ID ), },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, ids);
@@ -618,13 +570,6 @@ MODULE_PARM_DESC(debug_irq, "Enable debugging information in interrupt handler")
 
 module_param(pmcintx, int, 0644);
 MODULE_PARM_DESC(pmcintx, "Force INTx interrupt for PMC card");
-
-module_param(wrudly, long, 0644);
-MODULE_PARM_DESC(wrudly, "Delay in nsec after wb_write");
-
-module_param(rdudly, long, 0644);
-MODULE_PARM_DESC(rdudly, "Delay in nsec after wb_read");
-
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PCIE_WB_VERSION);
